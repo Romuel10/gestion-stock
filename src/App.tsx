@@ -1,354 +1,101 @@
-import { useEffect, useMemo, useState } from 'react'
-import { demoAgeGroups, demoFoods, demoMovements, demoRecipes, demoSuppliers, demoWeek } from './data'
-import { basePortions, daysUntil, generateSmartWeek, recipeCost, suggestRecipes, totalChildren } from './engine'
-import type { AgeGroup, DayMenu, Food, MealType, ShoppingNeed, StockMovement, Supplier } from './types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ageGroupsDefault, demoFoods, demoRecipes, demoSuppliers, demoWeek } from './data'
+import { daysUntil, generateSmartWeek, recipeCost, recipeRequirements, totalChildren } from './engine'
+import type { AgeGroup, DayMenu, Food, MealType, StockMovement, Supplier } from './types'
 
 type Section = 'dashboard' | 'enfants' | 'menus' | 'stock' | 'mouvements' | 'fournisseurs' | 'rapports' | 'parametres'
 
-type NewFood = {
-  name: string
-  category: string
-  unit: Food['unit']
-  stock: number
-  minimumStock: number
-  price: number
-}
-
-type MovementDraft = {
-  foodId: string
-  type: StockMovement['type']
-  quantity: number
-  reason: string
+type LocalBackup = {
+  version: 1
+  exportedAt: string
+  app: 'OrphéNutri Local'
+  ageGroups: AgeGroup[]
+  foods: Food[]
+  week: DayMenu[]
+  movements: StockMovement[]
+  suppliers: Supplier[]
+  weeklyBudget: number
 }
 
 const STORAGE = {
-  foods: 'orphenutri.foods.v2',
-  groups: 'orphenutri.groups.v2',
-  week: 'orphenutri.week.v2',
-  budget: 'orphenutri.budget.v2',
-  movements: 'orphenutri.movements.v2'
+  ageGroups: 'orphenutri.ageGroups.v1', foods: 'orphenutri.foods.v1', week: 'orphenutri.week.v1', movements: 'orphenutri.movements.v1', suppliers: 'orphenutri.suppliers.v1', budget: 'orphenutri.weeklyBudget.v1'
 }
 
 const mealFields: Array<{ key: keyof Omit<DayMenu, 'day'>; label: MealType }> = [
-  { key: 'breakfast', label: 'Petit-déjeuner' },
-  { key: 'lunch', label: 'Déjeuner' },
-  { key: 'snack', label: 'Goûter' },
-  { key: 'dinner', label: 'Dîner' }
+  { key: 'breakfast', label: 'Petit-déjeuner' }, { key: 'lunch', label: 'Déjeuner' }, { key: 'snack', label: 'Goûter' }, { key: 'dinner', label: 'Dîner' }
 ]
 
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
-}
+function readStorage<T>(key: string, fallback: T): T { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
+function formatMoney(value: number) { return `${Math.round(value).toLocaleString('fr-FR')} Ar` }
+function formatQty(value: number) { return value >= 10 ? value.toFixed(1) : value.toFixed(2) }
+function todayLabel() { return new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()) }
+function downloadText(filename: string, content: string, type = 'application/json') { const blob = new Blob([content], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url) }
 
-function formatMoney(value: number) {
-  return `${Math.round(value).toLocaleString('fr-FR')} Ar`
-}
-
-function formatQty(value: number, unit: string) {
-  const digits = unit === 'unité' ? 0 : 2
-  return `${value.toLocaleString('fr-FR', { maximumFractionDigits: digits })} ${unit}`
-}
-
-function todayName() {
-  const names = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
-  return names[new Date().getDay()]
-}
-
-function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
-  const content = rows
-    .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(';'))
-    .join('\n')
-  const blob = new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
-
-function App() {
+export default function App() {
   const [section, setSection] = useState<Section>('dashboard')
+  const [ageGroups, setAgeGroups] = useState<AgeGroup[]>(() => readStorage(STORAGE.ageGroups, ageGroupsDefault))
   const [foods, setFoods] = useState<Food[]>(() => readStorage(STORAGE.foods, demoFoods))
-  const [groups, setGroups] = useState<AgeGroup[]>(() => readStorage(STORAGE.groups, demoAgeGroups))
   const [week, setWeek] = useState<DayMenu[]>(() => readStorage(STORAGE.week, demoWeek))
+  const [movements, setMovements] = useState<StockMovement[]>(() => readStorage(STORAGE.movements, []))
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => readStorage(STORAGE.suppliers, demoSuppliers))
   const [weeklyBudget, setWeeklyBudget] = useState<number>(() => readStorage(STORAGE.budget, 1_800_000))
-  const [movements, setMovements] = useState<StockMovement[]>(() => readStorage(STORAGE.movements, demoMovements))
-  const [newFood, setNewFood] = useState<NewFood>({ name: '', category: 'Autre', unit: 'kg', stock: 0, minimumStock: 0, price: 0 })
-  const [movementDraft, setMovementDraft] = useState<MovementDraft>({ foodId: 'riz', type: 'entrée', quantity: 0, reason: '' })
-  const [smartMealType, setSmartMealType] = useState<MealType>('Déjeuner')
-  const suppliers: Supplier[] = demoSuppliers
+  const [notice, setNotice] = useState('Mode local : aucune donnée n’est envoyée sur Internet.')
+  const importRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => localStorage.setItem(STORAGE.ageGroups, JSON.stringify(ageGroups)), [ageGroups])
   useEffect(() => localStorage.setItem(STORAGE.foods, JSON.stringify(foods)), [foods])
-  useEffect(() => localStorage.setItem(STORAGE.groups, JSON.stringify(groups)), [groups])
   useEffect(() => localStorage.setItem(STORAGE.week, JSON.stringify(week)), [week])
-  useEffect(() => localStorage.setItem(STORAGE.budget, JSON.stringify(weeklyBudget)), [weeklyBudget])
   useEffect(() => localStorage.setItem(STORAGE.movements, JSON.stringify(movements)), [movements])
+  useEffect(() => localStorage.setItem(STORAGE.suppliers, JSON.stringify(suppliers)), [suppliers])
+  useEffect(() => localStorage.setItem(STORAGE.budget, JSON.stringify(weeklyBudget)), [weeklyBudget])
 
+  const childrenCount = useMemo(() => totalChildren(ageGroups), [ageGroups])
   const foodMap = useMemo(() => new Map(foods.map((food) => [food.id, food])), [foods])
   const recipeMap = useMemo(() => new Map(demoRecipes.map((recipe) => [recipe.id, recipe])), [])
-  const supplierMap = useMemo(() => new Map(suppliers.map((supplier) => [supplier.id, supplier])), [suppliers])
-  const childrenCount = useMemo(() => totalChildren(groups), [groups])
-  const weightedPortions = useMemo(() => basePortions(groups), [groups])
-
-  const weeklyRequirements = useMemo(() => {
-    const needs = new Map<string, number>()
-    week.forEach((day) => {
-      mealFields.forEach(({ key }) => {
-        const recipe = recipeMap.get(day[key])
-        recipe?.ingredients.forEach((ingredient) => {
-          needs.set(ingredient.foodId, (needs.get(ingredient.foodId) ?? 0) + ingredient.quantityPerBasePortion * weightedPortions)
-        })
-      })
-    })
-    return needs
-  }, [week, recipeMap, weightedPortions])
-
-  const shoppingNeeds = useMemo<ShoppingNeed[]>(() => {
-    return foods
-      .map((food) => {
-        const required = weeklyRequirements.get(food.id) ?? 0
-        const reserved = food.reserved ?? 0
-        const available = Math.max(0, food.stock - reserved)
-        const toBuy = Math.max(0, required - available)
-        return { food, required, available, reserved, toBuy, estimatedCost: toBuy * food.price }
-      })
-      .filter((item) => item.required > 0)
-      .sort((a, b) => b.estimatedCost - a.estimatedCost)
-  }, [foods, weeklyRequirements])
-
-  const shoppingCost = useMemo(() => shoppingNeeds.reduce((sum, item) => sum + item.estimatedCost, 0), [shoppingNeeds])
-  const plannedFoodValue = useMemo(() => shoppingNeeds.reduce((sum, item) => sum + item.required * item.food.price, 0), [shoppingNeeds])
-  const budgetBalance = weeklyBudget - plannedFoodValue
-  const lowStock = useMemo(() => foods.filter((food) => food.stock <= food.minimumStock), [foods])
-  const expiringSoon = useMemo(() => foods.map((food) => ({ food, days: daysUntil(food.expiryDate) })).filter((item) => item.days !== null && item.days >= 0 && item.days <= 7).sort((a, b) => (a.days ?? 99) - (b.days ?? 99)), [foods])
+  const weeklyNeeds = useMemo(() => { const totals = new Map<string, number>(); week.forEach((day) => mealFields.forEach(({ key }) => { const recipe = recipeMap.get(day[key]); if (!recipe) return; recipeRequirements(recipe, ageGroups).forEach((need) => totals.set(need.foodId, (totals.get(need.foodId) ?? 0) + need.quantity)) })); return totals }, [week, ageGroups, recipeMap])
+  const shoppingList = useMemo(() => Array.from(weeklyNeeds.entries()).map(([foodId, required]) => { const food = foodMap.get(foodId); if (!food) return null; const available = Math.max(0, food.stock - (food.reserved ?? 0)); const toBuy = Math.max(0, required - available); return { food, required, available, toBuy, estimatedCost: toBuy * food.price } }).filter((item): item is NonNullable<typeof item> => Boolean(item) && item.toBuy > 0).sort((a, b) => b.estimatedCost - a.estimatedCost), [weeklyNeeds, foodMap])
+  const weeklyCost = useMemo(() => week.reduce((sum, day) => sum + mealFields.reduce((daySum, { key }) => { const recipe = recipeMap.get(day[key]); return daySum + (recipe ? recipeCost(recipe, ageGroups, foods) : 0) }, 0), 0), [week, ageGroups, foods, recipeMap])
   const stockValue = useMemo(() => foods.reduce((sum, food) => sum + food.stock * food.price, 0), [foods])
-  const today = week.find((day) => day.day === todayName()) ?? week[0]
-  const todayCost = mealFields.reduce((sum, { key }) => {
-    const recipe = recipeMap.get(today[key])
-    return sum + (recipe ? recipeCost(recipe, groups, foods) : 0)
-  }, 0)
+  const lowStock = useMemo(() => foods.filter((food) => food.stock <= food.minimumStock), [foods])
+  const expiringSoon = useMemo(() => foods.filter((food) => { const days = daysUntil(food.expiryDate); return days !== null && days >= 0 && days <= 7 }), [foods])
+  const shoppingCost = useMemo(() => shoppingList.reduce((sum, item) => sum + item.estimatedCost, 0), [shoppingList])
 
-  const smartSuggestions = useMemo(
-    () => suggestRecipes(smartMealType, groups, foods, demoRecipes, weeklyBudget, week.flatMap((day) => [day.breakfast, day.lunch, day.snack, day.dinner]).slice(-4)),
-    [smartMealType, groups, foods, weeklyBudget, week]
-  )
-
-  function updateGroup(id: string, patch: Partial<AgeGroup>) {
-    setGroups((current) => current.map((group) => (group.id === id ? { ...group, ...patch } : group)))
-  }
-
-  function updateStock(id: string, stock: number) {
-    setFoods((current) => current.map((food) => (food.id === id ? { ...food, stock: Math.max(0, stock) } : food)))
-  }
-
-  function updatePrice(id: string, price: number) {
-    setFoods((current) => current.map((food) => food.id === id ? { ...food, price: Math.max(0, price), priceHistory: [...(food.priceHistory ?? []), { date: new Date().toISOString().slice(0, 10), price: Math.max(0, price) }] } : food))
-  }
-
-  function updateMenu(dayIndex: number, key: keyof Omit<DayMenu, 'day'>, recipeId: string) {
-    setWeek((current) => current.map((day, index) => index === dayIndex ? { ...day, [key]: recipeId } : day))
-  }
-
-  function addFood() {
-    if (!newFood.name.trim()) return
-    const id = `${newFood.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'aliment'}-${Date.now()}`
-    setFoods((current) => [...current, { id, ...newFood, name: newFood.name.trim(), reserved: 0, priceHistory: [{ date: new Date().toISOString().slice(0, 10), price: newFood.price }] }])
-    setNewFood({ name: '', category: 'Autre', unit: 'kg', stock: 0, minimumStock: 0, price: 0 })
-  }
-
-  function applyMovement() {
-    if (!movementDraft.foodId || movementDraft.quantity <= 0) return
-    const movement: StockMovement = {
-      id: `m-${Date.now()}`,
-      foodId: movementDraft.foodId,
-      type: movementDraft.type,
-      quantity: movementDraft.quantity,
-      date: new Date().toISOString().slice(0, 10),
-      reason: movementDraft.reason || 'Mouvement manuel',
-      user: 'Utilisateur local'
-    }
-    setMovements((current) => [movement, ...current])
-    setFoods((current) => current.map((food) => {
-      if (food.id !== movement.foodId) return food
-      const direction = movement.type === 'sortie' ? -1 : 1
-      return { ...food, stock: Math.max(0, food.stock + direction * movement.quantity) }
-    }))
-    setMovementDraft((current) => ({ ...current, quantity: 0, reason: '' }))
-  }
-
-  function generateWeek() {
-    setWeek(generateSmartWeek(groups, foods, demoRecipes, weeklyBudget))
-  }
-
-  function reserveWeek() {
-    setFoods((current) => current.map((food) => ({ ...food, reserved: weeklyRequirements.get(food.id) ?? 0 })))
-  }
-
-  function clearReservations() {
-    setFoods((current) => current.map((food) => ({ ...food, reserved: 0 })))
-  }
-
-  function resetDemo() {
-    if (!window.confirm('Réinitialiser toutes les données de démonstration OrphéNutri ?')) return
-    setFoods(demoFoods)
-    setGroups(demoAgeGroups)
-    setWeek(demoWeek)
-    setMovements(demoMovements)
-    setWeeklyBudget(1_800_000)
-  }
-
-  const navItems: Array<{ key: Section; label: string; icon: string }> = [
-    { key: 'dashboard', label: 'Tableau de bord', icon: '⌂' },
-    { key: 'enfants', label: 'Enfants & besoins', icon: '◉' },
-    { key: 'menus', label: 'Menus intelligents', icon: '✦' },
-    { key: 'stock', label: 'Stock & prix', icon: '▤' },
-    { key: 'mouvements', label: 'Achats & mouvements', icon: '⇄' },
-    { key: 'fournisseurs', label: 'Fournisseurs', icon: '▣' },
-    { key: 'rapports', label: 'Rapports', icon: '▧' },
-    { key: 'parametres', label: 'Paramètres', icon: '⚙' }
+  const nav: Array<{ id: Section; label: string; icon: string }> = [
+    { id: 'dashboard', label: 'Tableau de bord', icon: '◫' }, { id: 'enfants', label: 'Enfants', icon: '👥' }, { id: 'menus', label: 'Menus intelligents', icon: '🍽️' }, { id: 'stock', label: 'Stock & prix', icon: '📦' }, { id: 'mouvements', label: 'Entrées / sorties', icon: '↔' }, { id: 'fournisseurs', label: 'Fournisseurs', icon: '🏪' }, { id: 'rapports', label: 'Rapports', icon: '📄' }, { id: 'parametres', label: 'Paramètres', icon: '⚙' }
   ]
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">O</div>
-          <div><strong>OrphéNutri</strong><span>Restauration collective</span></div>
-        </div>
-        <nav>
-          {navItems.map((item) => (
-            <button key={item.key} className={section === item.key ? 'nav-item active' : 'nav-item'} onClick={() => setSection(item.key)}>
-              <span className="nav-icon">{item.icon}</span>{item.label}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-foot">
-          <span>Enfants aujourd’hui</span><strong>{childrenCount}</strong>
-          <small>{weightedPortions.toFixed(1)} portions de référence calculées</small>
-        </div>
-      </aside>
+  function generateWeek() { setWeek(generateSmartWeek(ageGroups, foods, demoRecipes, weeklyBudget)); setNotice('Nouvelle semaine proposée à partir du stock, du budget, des péremptions, des interdictions et de la variété.') }
+  function reserveWeek() { setFoods((current) => current.map((food) => ({ ...food, reserved: weeklyNeeds.get(food.id) ?? 0 }))); setNotice('Les quantités prévues pour la semaine sont réservées localement.') }
+  function addMovement(foodId: string, type: StockMovement['type'], quantity: number, unitPrice?: number, note?: string) { if (!foodId || !Number.isFinite(quantity) || quantity <= 0) return; const movement: StockMovement = { id: crypto.randomUUID(), foodId, type, quantity, unitPrice, note, date: new Date().toISOString() }; setMovements((current) => [movement, ...current]); setFoods((current) => current.map((food) => { if (food.id !== foodId) return food; const delta = type === 'entrée' || type === 'don' ? quantity : type === 'sortie' || type === 'perte' ? -quantity : 0; return { ...food, stock: Math.max(0, food.stock + delta), price: unitPrice && unitPrice > 0 ? unitPrice : food.price } })); setNotice('Mouvement enregistré localement sur cet ordinateur.') }
 
-      <main className="main-content">
-        <header className="topbar">
-          <div><p className="eyebrow">CENTRE ORPHELINAT DE LA GENDARMERIE</p><h1>{navItems.find((item) => item.key === section)?.label}</h1></div>
-          <div className="topbar-actions"><span className="status-dot" /><span>Site opérationnel · sauvegarde locale</span></div>
-        </header>
+  function exportBackup() { const backup: LocalBackup = { version: 1, exportedAt: new Date().toISOString(), app: 'OrphéNutri Local', ageGroups, foods, week, movements, suppliers, weeklyBudget }; downloadText(`orphe-nutri-sauvegarde-${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(backup, null, 2)); setNotice('Sauvegarde exportée. Conserve le fichier sur ce PC ou sur une clé USB.') }
+  function importBackup(file: File) { const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(String(reader.result)) as Partial<LocalBackup>; if (parsed.app !== 'OrphéNutri Local' || parsed.version !== 1) throw new Error(); if (parsed.ageGroups) setAgeGroups(parsed.ageGroups); if (parsed.foods) setFoods(parsed.foods); if (parsed.week) setWeek(parsed.week); if (parsed.movements) setMovements(parsed.movements); if (parsed.suppliers) setSuppliers(parsed.suppliers); if (typeof parsed.weeklyBudget === 'number') setWeeklyBudget(parsed.weeklyBudget); setNotice('Sauvegarde restaurée avec succès sur cet ordinateur.') } catch { setNotice('Impossible de restaurer ce fichier : sauvegarde invalide.') } }; reader.readAsText(file) }
+  function resetLocalData() { setAgeGroups(ageGroupsDefault); setFoods(demoFoods); setWeek(demoWeek); setMovements([]); setSuppliers(demoSuppliers); setWeeklyBudget(1_800_000); setNotice('Données locales réinitialisées.') }
+  function exportShoppingCsv() { const rows = [['Aliment','Quantité à acheter','Unité','Prix unitaire Ar','Coût estimé Ar']]; shoppingList.forEach((item) => rows.push([item.food.name,item.toBuy.toFixed(2),item.food.unit,String(item.food.price),String(Math.round(item.estimatedCost))])); downloadText('orphe-nutri-liste-courses.csv', rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"','""')}"`).join(';')).join('\n'), 'text/csv;charset=utf-8') }
 
-        {section === 'dashboard' && (
-          <section>
-            <div className="question-grid">
-              <article className="question-card primary"><span>QUE PRÉPARER AUJOURD’HUI ?</span><strong>{recipeMap.get(today.lunch)?.name ?? 'Menu non défini'}</strong><small>Déjeuner · {today.day}</small></article>
-              <article className="question-card"><span>POUR COMBIEN ?</span><strong>{childrenCount} enfants</strong><small>{groups.length} tranches d’âge configurées</small></article>
-              <article className="question-card"><span>COMBIEN ÇA COÛTE ?</span><strong>{formatMoney(todayCost)}</strong><small>{formatMoney(todayCost / Math.max(childrenCount, 1))} / enfant aujourd’hui</small></article>
-              <article className={shoppingCost > 0 ? 'question-card warning' : 'question-card good'}><span>AVONS-NOUS ASSEZ ?</span><strong>{shoppingCost > 0 ? `${shoppingNeeds.filter((item) => item.toBuy > 0).length} manque(s)` : 'Stock suffisant'}</strong><small>{shoppingCost > 0 ? `${formatMoney(shoppingCost)} à acheter` : 'Aucun achat urgent pour le menu'}</small></article>
-            </div>
-
-            <div className="hero-card">
-              <div><span className="pill">Moteur OrphéNutri</span><h2>Planifier les repas avec le stock, le budget et les produits à utiliser en priorité.</h2><p>Le moteur classe les plats selon la couverture du stock, le coût, la variété, les produits proches de la péremption et la place des aliments locaux. Les portions restent configurables et doivent être validées par le professionnel compétent du centre.</p></div>
-              <button className="primary-btn" onClick={() => { generateWeek(); setSection('menus') }}>Générer la semaine</button>
-            </div>
-
-            <div className="stats-grid">
-              <article className="stat-card"><span>Budget semaine</span><strong>{formatMoney(weeklyBudget)}</strong><small>{budgetBalance >= 0 ? `${formatMoney(budgetBalance)} de marge estimée` : `${formatMoney(Math.abs(budgetBalance))} de dépassement`}</small></article>
-              <article className="stat-card"><span>Valeur du stock</span><strong>{formatMoney(stockValue)}</strong><small>{foods.length} aliments suivis</small></article>
-              <article className="stat-card"><span>Coût alimentaire semaine</span><strong>{formatMoney(plannedFoodValue)}</strong><small>{formatMoney(plannedFoodValue / Math.max(childrenCount, 1) / 7)} / enfant / jour</small></article>
-              <article className="stat-card"><span>Achats à prévoir</span><strong>{formatMoney(shoppingCost)}</strong><small>{shoppingNeeds.filter((item) => item.toBuy > 0).length} références insuffisantes</small></article>
-            </div>
-
-            <div className="two-columns">
-              <article className="panel">
-                <div className="panel-title"><div><span className="eyebrow">ALERTES OPÉRATIONNELLES</span><h3>À traiter</h3></div><span className="count-badge">{lowStock.length + expiringSoon.length}</span></div>
-                <div className="alert-list">
-                  {lowStock.slice(0, 5).map((food) => <div className="alert-row warning" key={food.id}><span className="alert-symbol">!</span><div><strong>{food.name} : stock faible</strong><small>{formatQty(food.stock, food.unit)} disponible · seuil {formatQty(food.minimumStock, food.unit)}</small></div></div>)}
-                  {expiringSoon.slice(0, 5).map(({ food, days }) => <div className="alert-row" key={`exp-${food.id}`}><span className="alert-symbol">⌛</span><div><strong>{food.name} à utiliser rapidement</strong><small>{days === 0 ? 'Péremption aujourd’hui' : `Péremption dans ${days} jour(s)`}</small></div></div>)}
-                </div>
-              </article>
-              <article className="panel">
-                <div className="panel-title"><div><span className="eyebrow">PROCHAINS DÉJEUNERS</span><h3>Semaine planifiée</h3></div><button className="text-btn" onClick={() => setSection('menus')}>Ouvrir</button></div>
-                <div className="week-preview">{week.map((day) => <div className="week-row" key={day.day}><strong>{day.day.slice(0, 3)}</strong><span>{recipeMap.get(day.lunch)?.name ?? '—'}</span><b>{formatMoney(recipeMap.get(day.lunch) ? recipeCost(recipeMap.get(day.lunch)!, groups, foods) : 0)}</b></div>)}</div>
-              </article>
-            </div>
-          </section>
-        )}
-
-        {section === 'enfants' && (
-          <section>
-            <div className="section-lead"><div><span className="pill">Base de calcul</span><h2>{childrenCount} enfants répartis par âge</h2><p>Chaque tranche possède un facteur de portion configurable. Ces coefficients sont des paramètres techniques de démonstration, pas des prescriptions nutritionnelles.</p></div><div className="big-metric"><span>Portions de référence</span><strong>{weightedPortions.toFixed(1)}</strong></div></div>
-            <div className="age-grid">{groups.map((group) => <article className="panel age-card" key={group.id}><div className="age-title"><div><span className="eyebrow">TRANCHE D’ÂGE</span><h3>{group.label}</h3></div><strong>{group.count}</strong></div><label>Nombre d’enfants<input type="number" min="0" value={group.count} onChange={(e) => updateGroup(group.id, { count: Math.max(0, Number(e.target.value)) })} /></label><label>Facteur de portion<input type="number" min="0.1" step="0.05" value={group.portionFactor} onChange={(e) => updateGroup(group.id, { portionFactor: Math.max(0.1, Number(e.target.value)) })} /></label><label>Allergies / aliments interdits<input value={group.restrictions.join(', ')} placeholder="ex. arachide, lait..." onChange={(e) => updateGroup(group.id, { restrictions: e.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></label></article>)}</div>
-            <article className="panel notice-card"><strong>Validation professionnelle nécessaire</strong><p>Avant utilisation réelle, les facteurs de portion, restrictions, allergies, règles alimentaires et procédures d’hygiène doivent être validés par les professionnels compétents du centre. OrphéNutri sert ensuite à appliquer ces règles de manière cohérente.</p></article>
-          </section>
-        )}
-
-        {section === 'menus' && (
-          <section>
-            <div className="section-toolbar"><div><p>Le moteur peut construire une semaine automatiquement ou laisser le responsable choisir chaque plat. Il privilégie le stock disponible, le budget, la diversité et les produits proches de leur date limite.</p></div><div className="toolbar-actions"><button className="secondary-btn" onClick={generateWeek}>✦ Générer intelligemment</button><button className="primary-btn" onClick={reserveWeek}>Réserver le stock</button><button className="ghost-btn" onClick={clearReservations}>Libérer réservations</button></div></div>
-
-            <article className="panel smart-panel">
-              <div className="panel-title"><div><span className="eyebrow">AIDE À LA DÉCISION</span><h3>Meilleurs plats selon la situation actuelle</h3></div><select value={smartMealType} onChange={(e) => setSmartMealType(e.target.value as MealType)}>{mealFields.map((meal) => <option key={meal.label}>{meal.label}</option>)}</select></div>
-              <div className="suggestion-grid">{smartSuggestions.slice(0, 4).map((suggestion, index) => { const recipe = recipeMap.get(suggestion.recipeId)!; return <article className={index === 0 ? 'suggestion-card best' : 'suggestion-card'} key={suggestion.recipeId}><div className="suggestion-rank">#{index + 1}</div><h4>{recipe.name}</h4><div className="score-line"><span>Score</span><strong>{Math.round(suggestion.score)}</strong></div><div className="progress"><span style={{ width: `${Math.min(100, suggestion.stockCoverage * 100)}%` }} /></div><small>{Math.round(suggestion.stockCoverage * 100)} % couvert par le stock · {formatMoney(suggestion.estimatedCost)}</small><ul>{suggestion.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul></article> })}</div>
-            </article>
-
-            <div className="menu-grid">{week.map((day, dayIndex) => <article className="day-card" key={day.day}><div className="day-head"><h3>{day.day}</h3><span>{formatMoney(mealFields.reduce((sum, { key }) => { const recipe = recipeMap.get(day[key]); return sum + (recipe ? recipeCost(recipe, groups, foods) : 0) }, 0))}</span></div>{mealFields.map(({ key, label }) => <label className="meal-select" key={key}><span>{label}</span><select value={day[key]} onChange={(e) => updateMenu(dayIndex, key, e.target.value)}>{demoRecipes.filter((recipe) => recipe.mealType === label).map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select></label>)}</article>)}</div>
-          </section>
-        )}
-
-        {section === 'stock' && (
-          <section>
-            <div className="section-toolbar"><p>Les quantités, prix, réservations et dates de péremption alimentent directement le moteur de menus et la liste de courses.</p><div className="mini-stats"><span>Valeur stock <b>{formatMoney(stockValue)}</b></span><span>Alertes <b>{lowStock.length}</b></span></div></div>
-            <article className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Aliment</th><th>Catégorie</th><th>Stock</th><th>Réservé</th><th>Disponible</th><th>Prix</th><th>Fournisseur</th><th>État</th></tr></thead><tbody>{foods.map((food) => <tr key={food.id}><td><strong>{food.name}</strong>{food.local && <small className="local-tag">local</small>}</td><td>{food.category}</td><td><div className="number-with-unit"><input type="number" min="0" step="0.01" value={food.stock} onChange={(e) => updateStock(food.id, Number(e.target.value))} /><span>{food.unit}</span></div></td><td>{formatQty(food.reserved ?? 0, food.unit)}</td><td>{formatQty(Math.max(0, food.stock - (food.reserved ?? 0)), food.unit)}</td><td><div className="number-with-unit money-input"><input type="number" min="0" step="100" value={food.price} onChange={(e) => updatePrice(food.id, Number(e.target.value))} /><span>Ar</span></div></td><td>{supplierMap.get(food.supplierId ?? '')?.name ?? '—'}</td><td><span className={food.stock <= food.minimumStock ? 'state danger' : 'state ok'}>{food.stock <= food.minimumStock ? 'Stock faible' : 'Disponible'}</span></td></tr>)}</tbody></table></div></article>
-            <article className="panel add-form"><div><span className="eyebrow">NOUVEL ALIMENT</span><h3>Ajouter au catalogue</h3></div><div className="form-grid"><label>Nom<input value={newFood.name} onChange={(e) => setNewFood({ ...newFood, name: e.target.value })} /></label><label>Catégorie<input value={newFood.category} onChange={(e) => setNewFood({ ...newFood, category: e.target.value })} /></label><label>Unité<select value={newFood.unit} onChange={(e) => setNewFood({ ...newFood, unit: e.target.value as Food['unit'] })}><option>kg</option><option>L</option><option>unité</option></select></label><label>Stock<input type="number" value={newFood.stock} onChange={(e) => setNewFood({ ...newFood, stock: Number(e.target.value) })} /></label><label>Seuil minimum<input type="number" value={newFood.minimumStock} onChange={(e) => setNewFood({ ...newFood, minimumStock: Number(e.target.value) })} /></label><label>Prix unitaire<input type="number" value={newFood.price} onChange={(e) => setNewFood({ ...newFood, price: Number(e.target.value) })} /></label></div><button className="primary-btn" onClick={addFood}>Ajouter l’aliment</button></article>
-          </section>
-        )}
-
-        {section === 'mouvements' && (
-          <section>
-            <div className="shopping-summary"><div><span className="eyebrow">LISTE DE COURSES AUTOMATIQUE</span><h2>{formatMoney(shoppingCost)}</h2><p>{shoppingNeeds.filter((item) => item.toBuy > 0).length} produit(s) à acheter pour couvrir la semaine planifiée.</p></div><button className="secondary-btn" onClick={() => window.print()}>Imprimer</button></div>
-            <div className="two-columns purchase-layout">
-              <article className="panel"><div className="panel-title"><div><span className="eyebrow">BESOINS</span><h3>Courses de la semaine</h3></div></div><div className="compact-list">{shoppingNeeds.filter((item) => item.toBuy > 0).map((item) => <div className="need-row" key={item.food.id}><div><strong>{item.food.name}</strong><small>Besoin {formatQty(item.required, item.food.unit)} · disponible {formatQty(item.available, item.food.unit)}</small></div><div><b>{formatQty(item.toBuy, item.food.unit)}</b><span>{formatMoney(item.estimatedCost)}</span></div></div>)}</div></article>
-              <article className="panel"><div className="panel-title"><div><span className="eyebrow">ENTRÉES / SORTIES</span><h3>Enregistrer un mouvement</h3></div></div><div className="movement-form"><label>Aliment<select value={movementDraft.foodId} onChange={(e) => setMovementDraft({ ...movementDraft, foodId: e.target.value })}>{foods.map((food) => <option value={food.id} key={food.id}>{food.name}</option>)}</select></label><label>Type<select value={movementDraft.type} onChange={(e) => setMovementDraft({ ...movementDraft, type: e.target.value as StockMovement['type'] })}><option value="entrée">Entrée achat</option><option value="don">Don</option><option value="sortie">Sortie / consommation</option><option value="ajustement">Ajustement positif</option></select></label><label>Quantité<input type="number" min="0" step="0.01" value={movementDraft.quantity} onChange={(e) => setMovementDraft({ ...movementDraft, quantity: Number(e.target.value) })} /></label><label>Motif<input value={movementDraft.reason} onChange={(e) => setMovementDraft({ ...movementDraft, reason: e.target.value })} /></label><button className="primary-btn" onClick={applyMovement}>Enregistrer le mouvement</button></div></article>
-            </div>
-            <article className="panel table-panel movement-table"><div className="table-wrap"><table><thead><tr><th>Date</th><th>Aliment</th><th>Type</th><th>Quantité</th><th>Motif</th><th>Utilisateur</th></tr></thead><tbody>{movements.map((movement) => { const food = foodMap.get(movement.foodId); return <tr key={movement.id}><td>{movement.date}</td><td><strong>{food?.name ?? movement.foodId}</strong></td><td><span className={`movement ${movement.type}`}>{movement.type}</span></td><td>{food ? formatQty(movement.quantity, food.unit) : movement.quantity}</td><td>{movement.reason}</td><td>{movement.user}</td></tr> })}</tbody></table></div></article>
-          </section>
-        )}
-
-        {section === 'fournisseurs' && (
-          <section>
-            <div className="supplier-grid">{suppliers.map((supplier) => { const suppliedFoods = foods.filter((food) => food.supplierId === supplier.id); return <article className="panel supplier-card" key={supplier.id}><div className="supplier-icon">▣</div><h3>{supplier.name}</h3><p>{supplier.location}</p><small>{supplier.contact}</small><div className="supplier-foods">{suppliedFoods.map((food) => <div key={food.id}><span>{food.name}</span><b>{formatMoney(food.price)} / {food.unit}</b></div>)}</div></article> })}</div>
-            <article className="panel"><div className="panel-title"><div><span className="eyebrow">ÉVOLUTION DES PRIX</span><h3>Produits avec historique</h3></div></div><div className="price-history">{foods.filter((food) => (food.priceHistory?.length ?? 0) > 1).map((food) => { const history = food.priceHistory!; const first = history[0].price; const last = history[history.length - 1].price; const change = first ? ((last - first) / first) * 100 : 0; return <div key={food.id}><strong>{food.name}</strong><span>{formatMoney(first)} → {formatMoney(last)}</span><b className={change > 0 ? 'price-up' : 'price-down'}>{change >= 0 ? '+' : ''}{change.toFixed(1)} %</b></div> })}</div></article>
-          </section>
-        )}
-
-        {section === 'rapports' && (
-          <section>
-            <div className="report-grid">
-              <article className="report-card"><span className="report-icon">▧</span><div><h3>Menu hebdomadaire</h3><p>Planning complet des quatre repas quotidiens.</p></div><button onClick={() => window.print()}>Imprimer</button></article>
-              <article className="report-card"><span className="report-icon">▤</span><div><h3>État du stock</h3><p>Quantités, prix, réservations et valeur disponible.</p></div><button onClick={() => downloadCsv('orphe-nutri-stock.csv', [['Aliment','Catégorie','Stock','Unité','Réservé','Prix Ar'], ...foods.map((food) => [food.name, food.category, food.stock, food.unit, food.reserved ?? 0, food.price])])}>Exporter CSV</button></article>
-              <article className="report-card"><span className="report-icon">✓</span><div><h3>Liste de courses</h3><p>Besoins manquants et estimation du coût d’achat.</p></div><button onClick={() => downloadCsv('orphe-nutri-courses.csv', [['Aliment','Besoin','Disponible','À acheter','Unité','Coût Ar'], ...shoppingNeeds.map((item) => [item.food.name, item.required.toFixed(2), item.available.toFixed(2), item.toBuy.toFixed(2), item.food.unit, Math.round(item.estimatedCost)])])}>Exporter CSV</button></article>
-              <article className="report-card"><span className="report-icon">⇄</span><div><h3>Mouvements de stock</h3><p>Traçabilité des achats, dons et consommations.</p></div><button onClick={() => downloadCsv('orphe-nutri-mouvements.csv', [['Date','Aliment','Type','Quantité','Motif','Utilisateur'], ...movements.map((movement) => [movement.date, foodMap.get(movement.foodId)?.name ?? movement.foodId, movement.type, movement.quantity, movement.reason, movement.user])])}>Exporter CSV</button></article>
-            </div>
-            <article className="panel report-summary"><div><span>Enfants</span><strong>{childrenCount}</strong></div><div><span>Budget semaine</span><strong>{formatMoney(weeklyBudget)}</strong></div><div><span>Coût prévu</span><strong>{formatMoney(plannedFoodValue)}</strong></div><div><span>Valeur stock</span><strong>{formatMoney(stockValue)}</strong></div><div><span>Achats nécessaires</span><strong>{formatMoney(shoppingCost)}</strong></div></article>
-          </section>
-        )}
-
-        {section === 'parametres' && (
-          <section>
-            <div className="settings-grid">
-              <article className="panel settings-card"><span className="eyebrow">BUDGET</span><h3>Budget alimentaire hebdomadaire</h3><p>Le moteur utilise cette valeur pour pénaliser les plats trop coûteux.</p><label>Budget en ariary<input type="number" min="0" step="10000" value={weeklyBudget} onChange={(e) => setWeeklyBudget(Math.max(0, Number(e.target.value)))} /></label><div className="budget-box"><span>Coût semaine actuelle</span><strong>{formatMoney(plannedFoodValue)}</strong></div></article>
-              <article className="panel settings-card"><span className="eyebrow">DONNÉES</span><h3>Mode actuel</h3><p>Cette version sauvegarde les données dans ce navigateur. La structure Supabase du dépôt est prévue pour passer ensuite au mode multi-utilisateur partagé.</p><button className="danger-btn" onClick={resetDemo}>Réinitialiser la démonstration</button></article>
-              <article className="panel settings-card notice-card"><span className="eyebrow">NUTRITION</span><h3>Règles configurables</h3><p>OrphéNutri ne doit pas décider seul des besoins médicaux ou nutritionnels des enfants. Les portions, allergies, interdictions et règles du centre doivent être configurées puis validées par les professionnels compétents.</p></article>
-              <article className="panel settings-card"><span className="eyebrow">PROCHAINE ÉTAPE</span><h3>Mode institutionnel</h3><p>Authentification, rôles Direction / Stock / Cuisine / Nutrition, base Supabase, journal d’audit centralisé, bons d’achat et rapports PDF/Excel.</p><span className="state ok">Architecture déjà préparée</span></article>
-            </div>
-          </section>
-        )}
-      </main>
-    </div>
-  )
+  return <div className="app-shell">
+    <aside className="sidebar"><div className="brand"><div className="brand-mark">O</div><div><strong>OrphéNutri</strong><span>Édition locale</span></div></div><nav>{nav.map((item) => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => setSection(item.id)}><span className="nav-icon">{item.icon}</span>{item.label}</button>)}</nav><div className="sidebar-foot"><span>Mode de stockage</span><strong>100 % local</strong><small>Aucun compte, aucun cloud : les données restent sur ce PC.</small></div></aside>
+    <main className="main-content"><header className="topbar"><div><p className="eyebrow">CENTRE ORPHELINAT DE LA GENDARMERIE</p><h1>{nav.find((item) => item.id === section)?.label}</h1></div><div className="topbar-actions"><span className="status-dot" />Local uniquement · {todayLabel()}</div></header>
+    <div className="panel" style={{marginBottom:16}}><strong>🔒 Données locales uniquement</strong><p style={{margin:'6px 0 12px'}}>OrphéNutri n’envoie aucune donnée du centre sur Internet. Exporte régulièrement une sauvegarde pour éviter toute perte en cas de nettoyage du navigateur ou de panne du PC.</p><button className="secondary-btn" onClick={exportBackup}>💾 Sauvegarder maintenant</button></div>
+    {notice && <div className="panel" style={{marginBottom:16,padding:12}}>{notice}</div>}
+    {section === 'dashboard' && <Dashboard childrenCount={childrenCount} weeklyCost={weeklyCost} weeklyBudget={weeklyBudget} stockValue={stockValue} lowStock={lowStock} expiringSoon={expiringSoon} shoppingCost={shoppingCost} week={week} recipeMap={recipeMap} onGenerate={() => { generateWeek(); setSection('menus') }} />}
+    {section === 'enfants' && <ChildrenPage groups={ageGroups} setGroups={setAgeGroups} total={childrenCount} />}
+    {section === 'menus' && <MenusPage week={week} setWeek={setWeek} foods={foods} ageGroups={ageGroups} weeklyBudget={weeklyBudget} onGenerate={generateWeek} onReserve={reserveWeek} />}
+    {section === 'stock' && <StockPage foods={foods} setFoods={setFoods} weeklyNeeds={weeklyNeeds} />}
+    {section === 'mouvements' && <MovementsPage foods={foods} movements={movements} onAdd={addMovement} />}
+    {section === 'fournisseurs' && <SuppliersPage suppliers={suppliers} setSuppliers={setSuppliers} />}
+    {section === 'rapports' && <ReportsPage shoppingList={shoppingList} weeklyCost={weeklyCost} stockValue={stockValue} movements={movements} onCsv={exportShoppingCsv} onBackup={exportBackup} />}
+    {section === 'parametres' && <SettingsPage weeklyBudget={weeklyBudget} setWeeklyBudget={setWeeklyBudget} onBackup={exportBackup} onImport={() => importRef.current?.click()} onReset={resetLocalData} />}
+    <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) importBackup(file); event.currentTarget.value = '' }} /></main>
+  </div>
 }
 
-export default App
+function Dashboard({ childrenCount, weeklyCost, weeklyBudget, stockValue, lowStock, expiringSoon, shoppingCost, week, recipeMap, onGenerate }: any) { const today = week[0]; return <><section className="hero-card"><div><span className="pill">DÉCISION DU JOUR</span><h2>Que préparer, en quelle quantité, à quel coût, et avons-nous le stock ?</h2><p>OrphéNutri combine les effectifs, les portions configurées, les stocks et le budget.</p></div><button className="primary-btn" onClick={onGenerate}>✨ Générer une semaine</button></section><div className="stats-grid"><Stat label="Enfants" value={childrenCount} detail="Toutes tranches d’âge"/><Stat label="Coût prévu semaine" value={formatMoney(weeklyCost)} detail={`Budget : ${formatMoney(weeklyBudget)}`} good={weeklyCost<=weeklyBudget} danger={weeklyCost>weeklyBudget}/><Stat label="Achats à prévoir" value={formatMoney(shoppingCost)} detail="Selon le stock actuel"/><Stat label="Valeur du stock" value={formatMoney(stockValue)} detail={`${lowStock.length} alerte(s)`}/></div><div className="two-columns"><section className="panel"><h3>{today?.day ?? 'Menu'}</h3><div className="today-meals">{today && mealFields.map(({key,label}) => <div key={key}><span>{label}</span><strong>{recipeMap.get(today[key])?.name ?? 'Non défini'}</strong></div>)}</div></section><section className="panel"><h3>À surveiller</h3><div className="alert-list">{lowStock.slice(0,4).map((food:Food)=><div className="alert-row warning" key={food.id}><strong>{food.name} : stock faible</strong><small>{food.stock} {food.unit} disponibles</small></div>)}{expiringSoon.slice(0,4).map((food:Food)=><div className="alert-row" key={food.id}><strong>{food.name} : péremption proche</strong><small>{daysUntil(food.expiryDate)} jour(s)</small></div>)}</div></section></div></> }
+function Stat({label,value,detail,good,danger}:any){return <div className={`stat-card ${good?'good':''} ${danger?'danger':''}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>}
+function ChildrenPage({groups,setGroups,total}:{groups:AgeGroup[];setGroups:(g:AgeGroup[])=>void;total:number}){function patch(id:string,update:Partial<AgeGroup>){setGroups(groups.map(g=>g.id===id?{...g,...update}:g))}return <><div className="section-intro"><div><h2>Effectifs et portions</h2><p>Paramètres locaux du centre à valider avant usage réel.</p></div><div className="big-number">{total}<span> enfants</span></div></div><div className="age-grid">{groups.map(g=><section className="panel age-card" key={g.id}><h3>{g.label}</h3><label>Nombre d’enfants<input type="number" min="0" value={g.count} onChange={e=>patch(g.id,{count:Math.max(0,Number(e.target.value))})}/></label><label>Facteur de portion<input type="number" min="0.1" step="0.05" value={g.portionFactor} onChange={e=>patch(g.id,{portionFactor:Math.max(.1,Number(e.target.value))})}/></label><label>Allergies / aliments interdits<input value={(g.restrictions??[]).join(', ')} onChange={e=>patch(g.id,{restrictions:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label></section>)}</div></>}
+function MenusPage({week,setWeek,foods,ageGroups,weeklyBudget,onGenerate,onReserve}:any){const byType=(t:MealType)=>demoRecipes.filter(r=>r.mealType===t);return <><div className="section-toolbar"><div><h2>Plan de repas sur 7 jours</h2><p>Proposition automatique basée sur stock, budget, péremption, interdictions et variété.</p></div><div className="action-row"><button className="secondary-btn" onClick={onGenerate}>✨ Régénérer</button><button className="primary-btn" onClick={onReserve}>Réserver le stock</button></div></div><div className="menu-grid">{week.map((day:DayMenu,index:number)=><article className="day-card" key={day.day}><div className="day-head"><h3>{day.day}</h3><span>{formatMoney(mealFields.reduce((sum,{key})=>{const r=demoRecipes.find(x=>x.id===day[key]);return sum+(r?recipeCost(r,ageGroups,foods):0)},0))}</span></div>{mealFields.map(({key,label})=><label className="meal-select" key={key}><span>{label}</span><select value={day[key]} onChange={e=>setWeek(week.map((d:DayMenu,i:number)=>i===index?{...d,[key]:e.target.value}:d))}>{byType(label).map(r=><option value={r.id} key={r.id}>{r.name}</option>)}</select></label>)}</article>)}</div><div className="notice-card panel"><strong>Important</strong><p>Le moteur aide à la logistique et au budget ; les portions et règles nutritionnelles doivent être validées par un professionnel.</p><small>Budget : {formatMoney(weeklyBudget)}</small></div></>}
+function StockPage({foods,setFoods,weeklyNeeds}:any){function patch(id:string,update:Partial<Food>){setFoods((cur:Food[])=>cur.map(f=>f.id===id?{...f,...update}:f))}return <section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Aliment</th><th>Catégorie</th><th>Stock</th><th>Réservé</th><th>Besoin semaine</th><th>Seuil</th><th>Prix</th><th>Péremption</th></tr></thead><tbody>{foods.map((f:Food)=><tr key={f.id}><td><strong>{f.name}</strong></td><td>{f.category}</td><td><input className="compact-input" type="number" step=".1" value={f.stock} onChange={e=>patch(f.id,{stock:Math.max(0,Number(e.target.value))})}/> {f.unit}</td><td>{formatQty(f.reserved??0)} {f.unit}</td><td>{formatQty(weeklyNeeds.get(f.id)??0)} {f.unit}</td><td><input className="compact-input" type="number" step=".1" value={f.minimumStock} onChange={e=>patch(f.id,{minimumStock:Math.max(0,Number(e.target.value))})}/></td><td><input className="money-field" type="number" value={f.price} onChange={e=>patch(f.id,{price:Math.max(0,Number(e.target.value))})}/> Ar/{f.unit}</td><td><input type="date" value={f.expiryDate??''} onChange={e=>patch(f.id,{expiryDate:e.target.value||undefined})}/></td></tr>)}</tbody></table></div></section>}
+function MovementsPage({foods,movements,onAdd}:any){const[foodId,setFoodId]=useState(foods[0]?.id??'');const[type,setType]=useState<StockMovement['type']>('entrée');const[quantity,setQuantity]=useState(1);const[unitPrice,setUnitPrice]=useState(0);const[note,setNote]=useState('');return <><section className="panel movement-form"><div className="form-grid"><label>Aliment<select value={foodId} onChange={e=>setFoodId(e.target.value)}>{foods.map((f:Food)=><option value={f.id} key={f.id}>{f.name}</option>)}</select></label><label>Type<select value={type} onChange={e=>setType(e.target.value as StockMovement['type'])}><option value="entrée">Entrée achat</option><option value="don">Don</option><option value="sortie">Sortie cuisine</option><option value="perte">Perte</option><option value="ajustement">Ajustement</option></select></label><label>Quantité<input type="number" min=".01" step=".1" value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label><label>Prix unitaire<input type="number" min="0" value={unitPrice} onChange={e=>setUnitPrice(Number(e.target.value))}/></label><label>Note<input value={note} onChange={e=>setNote(e.target.value)}/></label></div><button className="primary-btn" onClick={()=>{onAdd(foodId,type,quantity,unitPrice||undefined,note||undefined);setNote('')}}>Enregistrer</button></section><section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>Date</th><th>Aliment</th><th>Type</th><th>Quantité</th><th>Prix</th><th>Note</th></tr></thead><tbody>{movements.map((m:StockMovement)=>{const f=foods.find((x:Food)=>x.id===m.foodId);return <tr key={m.id}><td>{new Date(m.date).toLocaleString('fr-FR')}</td><td>{f?.name}</td><td>{m.type}</td><td>{m.quantity} {f?.unit}</td><td>{m.unitPrice?formatMoney(m.unitPrice):'—'}</td><td>{m.note??'—'}</td></tr>})}</tbody></table></div></section></>}
+function SuppliersPage({suppliers,setSuppliers}:any){const[name,setName]=useState('');const[phone,setPhone]=useState('');return <><div className="supplier-grid">{suppliers.map((s:Supplier)=><article className="panel supplier-card" key={s.id}><h3>{s.name}</h3><p>{s.type}</p><strong>{s.phone||'Téléphone non renseigné'}</strong><small>{s.notes}</small></article>)}</div><section className="panel add-form"><h3>Ajouter un fournisseur</h3><div className="form-grid"><label>Nom<input value={name} onChange={e=>setName(e.target.value)}/></label><label>Téléphone<input value={phone} onChange={e=>setPhone(e.target.value)}/></label></div><button className="primary-btn" onClick={()=>{if(!name.trim())return;setSuppliers((s:Supplier[])=>[...s,{id:crypto.randomUUID(),name:name.trim(),phone:phone.trim(),type:'Fournisseur local'}]);setName('');setPhone('')}}>Ajouter</button></section></>}
+function ReportsPage({shoppingList,weeklyCost,stockValue,movements,onCsv,onBackup}:any){return <><div className="report-grid"><button className="report-card" onClick={()=>window.print()}><strong>🖨️ Imprimer</strong><small>Rapport courant</small></button><button className="report-card" onClick={onCsv}><strong>📊 Exporter CSV</strong><small>Liste de courses</small></button><button className="report-card" onClick={onBackup}><strong>💾 Sauvegarde complète</strong><small>Fichier local</small></button></div><div className="stats-grid"><Stat label="Coût semaine" value={formatMoney(weeklyCost)} detail="Menu planifié"/><Stat label="Valeur du stock" value={formatMoney(stockValue)} detail="Au prix actuel"/><Stat label="Produits à acheter" value={shoppingList.length} detail="Références manquantes"/><Stat label="Mouvements" value={movements.length} detail="Historique local"/></div></>}
+function SettingsPage({weeklyBudget,setWeeklyBudget,onBackup,onImport,onReset}:any){return <div className="settings-grid"><section className="panel settings-card"><h3>Budget hebdomadaire</h3><label>Montant en ariary<input type="number" min="0" step="10000" value={weeklyBudget} onChange={e=>setWeeklyBudget(Math.max(0,Number(e.target.value)))}/></label><div className="budget-box"><span>Budget actuel</span><strong>{formatMoney(weeklyBudget)}</strong></div></section><section className="panel settings-card"><h3>Sauvegarde locale</h3><p>Les données sont dans ce navigateur. Exporte une copie régulièrement.</p><div className="action-row"><button className="primary-btn" onClick={onBackup}>💾 Exporter</button><button className="secondary-btn" onClick={onImport}>📂 Restaurer</button></div></section><section className="panel settings-card notice-card"><h3>Aucun cloud</h3><p>Cette édition n’utilise ni Supabase, ni compte distant, ni synchronisation Internet.</p></section><section className="panel settings-card"><h3>Réinitialisation</h3><button className="danger-btn" onClick={onReset}>Réinitialiser les données locales</button></section></div>}
