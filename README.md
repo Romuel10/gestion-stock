@@ -1,82 +1,88 @@
-# OrphéNutri
+# OrphéNutri Local
 
-Application web de gestion de restauration collective conçue pour le Centre Orphelinat de la Gendarmerie.
+Application web **100 % locale** de gestion de restauration collective pour le Centre Orphelinat de la Gendarmerie.
 
-## Objectif opérationnel
+OrphéNutri est conçu pour fonctionner sur **un seul ordinateur du centre**. Les données ne sont pas envoyées vers Supabase, Netlify, GitHub Pages ou une autre base distante.
 
-Chaque matin, OrphéNutri doit aider le centre à répondre rapidement à quatre questions :
+## Objectif
 
-1. Que préparer aujourd’hui ?
+Chaque matin, l'application aide à répondre à quatre questions :
+
+1. Que préparer aujourd'hui ?
 2. En quelle quantité ?
 3. Combien cela va coûter ?
 4. Le stock disponible est-il suffisant ?
 
-## Fonctionnalités actuellement implémentées
+## Fonctionnement local
 
-- Tableau de bord centré sur les quatre questions opérationnelles.
-- Gestion des enfants par tranches d’âge : 2–5, 6–9, 10–14 et 15–17 ans.
-- Facteurs de portion configurables par tranche d’âge.
-- Saisie d’allergies et aliments interdits par groupe.
-- Catalogue d’aliments adapté au contexte malgache : vary, tsaramaso, voanjobory, anana, mangahazo, patate douce, poisson, poulet, fruits locaux, etc.
-- Planification de quatre repas quotidiens sur 7 jours.
-- Moteur de génération automatique des menus selon stock, budget, diversité, proximité de péremption et place des aliments locaux.
-- Exclusion automatique des recettes utilisant un aliment déclaré interdit lors de la génération.
-- Simulation de la consommation du stock au fil des 28 repas de la semaine.
-- Calcul automatique des quantités nécessaires selon les groupes d’âge.
-- Calcul du coût par repas, par jour, par semaine et par enfant.
-- Gestion du stock, seuils minimums, réservations et dates de péremption.
-- Réservation du stock correspondant à un menu hebdomadaire validé.
-- Liste de courses automatique avec quantités manquantes et coût estimé.
-- Entrées de stock, dons, sorties/consommations et ajustements avec historique local.
-- Budget alimentaire hebdomadaire et détection des dépassements.
-- Fournisseurs de démonstration et historique de prix.
-- Export CSV du stock, des courses et des mouvements.
-- Impression des rapports et menus via le navigateur.
-- Interface responsive PC, tablette et téléphone.
-- PWA installable avec cache hors ligne de base.
+- L'interface s'ouvre dans le navigateur à l'adresse `http://127.0.0.1:4173`.
+- `127.0.0.1` signifie que le serveur écoute uniquement sur l'ordinateur lui-même.
+- Les données métier sont enregistrées dans le stockage local du navigateur de ce PC.
+- Aucun compte Internet n'est nécessaire.
+- Aucune synchronisation cloud n'est effectuée.
+- Une sauvegarde complète peut être exportée au format JSON puis restaurée plus tard.
+- Il est recommandé de conserver régulièrement une copie de sauvegarde sur une clé USB ou un deuxième disque.
+
+## Démarrage sous Windows
+
+Prérequis : Node.js 22.12 ou supérieur.
+
+1. Télécharger ou cloner le dépôt sur l'ordinateur du centre.
+2. Double-cliquer sur `LANCER-ORPHENUTRI.bat`.
+3. Lors du premier lancement seulement, les dépendances de développement peuvent nécessiter une connexion Internet pour être installées.
+4. Ensuite l'application est construite localement et s'ouvre sur `http://127.0.0.1:4173`.
+5. Fermer la fenêtre de commande OrphéNutri arrête le serveur local.
+
+Pour lancer manuellement :
+
+```bash
+npm ci
+npm run build
+node local-server.mjs
+```
+
+## Sauvegarde des données
+
+Dans **Paramètres** ou **Rapports** :
+
+- `Exporter une sauvegarde` crée un fichier `orphe-nutri-sauvegarde-AAAA-MM-JJ.json` ;
+- `Restaurer une sauvegarde` recharge ce fichier sur le PC ;
+- les sauvegardes comprennent les effectifs, stocks, menus, mouvements, fournisseurs et budget.
+
+Cette sauvegarde est importante car supprimer les données du navigateur, réinstaller Windows ou changer de profil navigateur peut effacer le stockage local.
+
+## Fonctions principales
+
+- Tableau de bord opérationnel.
+- Groupes d'âge 2–5, 6–9, 10–14 et 15–17 ans.
+- Facteurs de portion configurables.
+- Allergies et aliments interdits.
+- Aliments adaptés au contexte malgache : vary, tsaramaso, voanjobory, anana, mangahazo, patate douce, poisson, poulet, fruits locaux, etc.
+- Menus sur 7 jours avec quatre repas par jour.
+- Génération selon stock, budget, diversité, péremption et restrictions.
+- Simulation de la diminution du stock au fil de la semaine.
+- Calcul des quantités, coûts et achats manquants.
+- Gestion du stock et réservations.
+- Entrées, dons, sorties cuisine et pertes avec historique local.
+- Fournisseurs.
+- Liste de courses et export CSV.
+- Rapports imprimables.
+- Sauvegarde/restauration locale complète.
 
 ## Important : nutrition
 
-Les facteurs de portion et recettes fournis dans `src/data.ts` sont des paramètres de démonstration permettant de tester les calculs. Ils ne constituent pas des prescriptions nutritionnelles.
+Les facteurs de portion et recettes de démonstration permettent de tester les calculs. Ils ne constituent pas des prescriptions nutritionnelles.
 
-Avant utilisation réelle, le centre doit faire valider les portions, allergies, restrictions, règles alimentaires et procédures d’hygiène par les professionnels compétents. OrphéNutri applique ensuite les règles configurées.
+Avant utilisation réelle, les portions, allergies, restrictions, règles alimentaires et procédures d'hygiène doivent être validées par les professionnels compétents du centre. OrphéNutri applique ensuite les règles configurées.
 
-## Moteur intelligent
+## Architecture
 
-Le moteur se trouve dans `src/engine.ts`.
+- `src/data.ts` : aliments, recettes et données de démonstration ;
+- `src/engine.ts` : moteur de proposition des menus ;
+- `src/App.tsx` : interface, gestion locale et sauvegardes ;
+- `local-server.mjs` : serveur HTTP limité à `127.0.0.1` ;
+- `LANCER-ORPHENUTRI.bat` : lancement simplifié sous Windows.
 
-Il prend en compte :
+## Confidentialité
 
-`groupes d’âge + portions configurées + restrictions + stock restant + réservations + dates de péremption + prix + budget + historique récent des plats → classement des recettes et génération de la semaine`
-
-Lorsqu’il génère une semaine, il simule la diminution du stock après chaque repas afin que les choix des jours suivants utilisent le stock restant et non le stock initial.
-
-## Technologies
-
-- React 19
-- TypeScript
-- Vite
-- CSS responsive
-- Supabase JS préparé pour la prochaine phase
-- GitHub Pages pour la version publique
-
-## Site public
-
-https://romuel10.github.io/gestion-stock/
-
-Le workflow `.github/workflows/deploy-pages.yml` publie automatiquement la branche `main` sur GitHub Pages.
-
-## Données actuelles
-
-La version publique fonctionne actuellement en mode navigateur avec `localStorage`. Cela permet de tester l’ensemble du fonctionnement sans dépendre d’une base distante.
-
-Les données principales se trouvent dans :
-
-- `src/data.ts` : aliments, recettes, fournisseurs, groupes d’âge et données de démonstration ;
-- `src/engine.ts` : moteur de décision ;
-- `src/App.tsx` : interface et logique utilisateur ;
-- `supabase/schema.sql` : première architecture de base de données pour le futur mode multi-utilisateur.
-
-## Prochaine phase institutionnelle
-
-La prochaine phase consiste à connecter réellement Supabase afin d’obtenir : authentification, rôles Administrateur / Direction / Responsable de stock / Cuisine / Nutrition, données partagées entre appareils, fournisseurs et achats centralisés, journal d’audit, historique permanent et rapports institutionnels.
+Cette édition est volontairement **mono-PC et locale**. Elle n'a pas pour objectif de partager les données entre plusieurs ordinateurs ou utilisateurs. Pour déplacer les données sur un autre PC, utiliser l'export/import de sauvegarde.
