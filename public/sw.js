@@ -1,5 +1,5 @@
-const CACHE_NAME = 'nutristock-v1'
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg']
+const CACHE_NAME = 'orphenutri-v3'
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)))
@@ -25,6 +25,10 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
         return response
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      .catch(async () => {
+        const cached = await caches.match(event.request)
+        if (cached) return cached
+        return caches.match('./index.html')
+      })
   )
 })
