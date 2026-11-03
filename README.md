@@ -1,127 +1,82 @@
-# NutriStock Orphelinat
+# OrphéNutri
 
-Site web de gestion nutritionnelle et de stock pour le Centre Orphelinat de la Gendarmerie.
+Application web de gestion de restauration collective conçue pour le Centre Orphelinat de la Gendarmerie.
 
-## Fonctionnalités actuelles
+## Objectif opérationnel
 
-- Tableau de bord avec alertes de stock et de péremption.
-- Gestion des aliments, quantités disponibles, seuils minimums et prix en ariary.
-- Planification des repas sur 7 jours : petit-déjeuner, déjeuner, goûter et dîner.
-- Calcul automatique des quantités nécessaires selon le nombre d'enfants.
-- Calcul automatique du coût des repas.
-- Comparaison avec le stock disponible.
-- Génération automatique de la liste de courses et du coût estimé des achats manquants.
-- Budget mensuel et estimation du budget hebdomadaire.
-- Catalogue initial de recettes et portions par enfant.
-- Sauvegarde locale des modifications dans le navigateur.
-- Interface responsive pour ordinateur, tablette et téléphone.
+Chaque matin, OrphéNutri doit aider le centre à répondre rapidement à quatre questions :
+
+1. Que préparer aujourd’hui ?
+2. En quelle quantité ?
+3. Combien cela va coûter ?
+4. Le stock disponible est-il suffisant ?
+
+## Fonctionnalités actuellement implémentées
+
+- Tableau de bord centré sur les quatre questions opérationnelles.
+- Gestion des enfants par tranches d’âge : 2–5, 6–9, 10–14 et 15–17 ans.
+- Facteurs de portion configurables par tranche d’âge.
+- Saisie d’allergies et aliments interdits par groupe.
+- Catalogue d’aliments adapté au contexte malgache : vary, tsaramaso, voanjobory, anana, mangahazo, patate douce, poisson, poulet, fruits locaux, etc.
+- Planification de quatre repas quotidiens sur 7 jours.
+- Moteur de génération automatique des menus selon stock, budget, diversité, proximité de péremption et place des aliments locaux.
+- Exclusion automatique des recettes utilisant un aliment déclaré interdit lors de la génération.
+- Simulation de la consommation du stock au fil des 28 repas de la semaine.
+- Calcul automatique des quantités nécessaires selon les groupes d’âge.
+- Calcul du coût par repas, par jour, par semaine et par enfant.
+- Gestion du stock, seuils minimums, réservations et dates de péremption.
+- Réservation du stock correspondant à un menu hebdomadaire validé.
+- Liste de courses automatique avec quantités manquantes et coût estimé.
+- Entrées de stock, dons, sorties/consommations et ajustements avec historique local.
+- Budget alimentaire hebdomadaire et détection des dépassements.
+- Fournisseurs de démonstration et historique de prix.
+- Export CSV du stock, des courses et des mouvements.
+- Impression des rapports et menus via le navigateur.
+- Interface responsive PC, tablette et téléphone.
 - PWA installable avec cache hors ligne de base.
-- Impression de la liste de courses.
-- Schéma Supabase multi-utilisateur préparé avec Row Level Security (RLS).
+
+## Important : nutrition
+
+Les facteurs de portion et recettes fournis dans `src/data.ts` sont des paramètres de démonstration permettant de tester les calculs. Ils ne constituent pas des prescriptions nutritionnelles.
+
+Avant utilisation réelle, le centre doit faire valider les portions, allergies, restrictions, règles alimentaires et procédures d’hygiène par les professionnels compétents. OrphéNutri applique ensuite les règles configurées.
+
+## Moteur intelligent
+
+Le moteur se trouve dans `src/engine.ts`.
+
+Il prend en compte :
+
+`groupes d’âge + portions configurées + restrictions + stock restant + réservations + dates de péremption + prix + budget + historique récent des plats → classement des recettes et génération de la semaine`
+
+Lorsqu’il génère une semaine, il simule la diminution du stock après chaque repas afin que les choix des jours suivants utilisent le stock restant et non le stock initial.
 
 ## Technologies
 
 - React 19
 - TypeScript
 - Vite
-- Supabase JS
-- CSS responsive sans framework UI externe
-- GitHub Pages ou Netlify pour l'hébergement statique
+- CSS responsive
+- Supabase JS préparé pour la prochaine phase
+- GitHub Pages pour la version publique
 
-## Démarrage local
+## Site public
 
-Prérequis : Node.js 22.12 ou supérieur.
+https://romuel10.github.io/gestion-stock/
 
-```bash
-npm ci
-npm run dev
-```
+Le workflow `.github/workflows/deploy-pages.yml` publie automatiquement la branche `main` sur GitHub Pages.
 
-Pour vérifier la version de production :
+## Données actuelles
 
-```bash
-npm run build
-npm run preview
-```
+La version publique fonctionne actuellement en mode navigateur avec `localStorage`. Cela permet de tester l’ensemble du fonctionnement sans dépendre d’une base distante.
 
-## Site web GitHub Pages
+Les données principales se trouvent dans :
 
-Le dépôt contient `.github/workflows/deploy-pages.yml`. À chaque modification de `main`, GitHub construit automatiquement le site puis le publie sur GitHub Pages.
+- `src/data.ts` : aliments, recettes, fournisseurs, groupes d’âge et données de démonstration ;
+- `src/engine.ts` : moteur de décision ;
+- `src/App.tsx` : interface et logique utilisateur ;
+- `supabase/schema.sql` : première architecture de base de données pour le futur mode multi-utilisateur.
 
-Une seule activation initiale est nécessaire dans GitHub :
+## Prochaine phase institutionnelle
 
-1. Ouvrir `Settings` du dépôt.
-2. Ouvrir `Pages`.
-3. Dans `Build and deployment`, choisir `GitHub Actions` comme source.
-
-Après cette activation, l'adresse prévue est :
-
-`https://romuel10.github.io/gestion-stock/`
-
-Le build Vite utilise des chemins relatifs afin que le même projet puisse aussi être hébergé sur Netlify ou un autre hébergeur statique.
-
-## Données
-
-La version actuelle fonctionne immédiatement en mode navigateur. Les données de démonstration sont définies dans `src/data.ts` puis sauvegardées dans le `localStorage` du navigateur lorsque l'utilisateur les modifie.
-
-Cette approche permet de tester le logiciel avant de créer la base de production.
-
-## Connexion à Supabase
-
-Le fichier `supabase/schema.sql` contient le modèle préparatoire pour :
-
-- centres ;
-- utilisateurs et rôles ;
-- aliments ;
-- recettes et ingrédients ;
-- menus hebdomadaires ;
-- mouvements de stock ;
-- fournisseurs ;
-- achats ;
-- budgets.
-
-Les tables publiques ont RLS activé et l'accès anonyme n'est pas autorisé.
-
-Créer ensuite un fichier `.env.local` à partir de `.env.example` :
-
-```env
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
-```
-
-Ne jamais mettre une clé `service_role` ou une clé secrète Supabase dans le frontend.
-
-> Le schéma n'est volontairement pas appliqué automatiquement à une base distante. Il doit d'abord être validé avec l'organisation réelle du centre et le projet Supabase choisi.
-
-## Déploiement Netlify
-
-Le dépôt contient également `netlify.toml` :
-
-- commande de build : `npm run build`
-- dossier publié : `dist`
-- Node.js : 22
-
-Le dépôt peut donc être connecté à Netlify si cette plateforme est préférée.
-
-## Vérification automatique
-
-Le workflow `.github/workflows/build.yml` installe les dépendances avec `npm ci` et lance `npm run build` à chaque push et pull request vers `main`.
-
-## Sécurité et nutrition
-
-NutriStock automatise les calculs de stock, coût, quantités et planification. Les portions fournies dans les données de démonstration sont des exemples de développement et ne constituent pas une prescription nutritionnelle.
-
-Avant utilisation réelle auprès des enfants, les portions, règles nutritionnelles, allergies, restrictions alimentaires et procédures d'hygiène doivent être validées par les professionnels compétents du centre.
-
-## Prochaines évolutions prévues
-
-1. Connexion réelle à Supabase et authentification.
-2. Rôles Administrateur, Direction, Gestionnaire et Cuisine.
-3. Entrées/sorties de stock avec historique complet.
-4. Gestion des fournisseurs et bons d'achat.
-5. Historique des prix.
-6. Validation et consommation d'un repas avec déduction automatique du stock.
-7. Rapports PDF/Excel.
-8. Suggestions de menus optimisées selon stock, budget, variété et produits proches de péremption.
-9. Gestion configurable des groupes d'âge et règles nutritionnelles validées.
-10. Journal d'audit des actions sensibles.
+La prochaine phase consiste à connecter réellement Supabase afin d’obtenir : authentification, rôles Administrateur / Direction / Responsable de stock / Cuisine / Nutrition, données partagées entre appareils, fournisseurs et achats centralisés, journal d’audit, historique permanent et rapports institutionnels.
