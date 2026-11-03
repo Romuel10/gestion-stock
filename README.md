@@ -1,6 +1,6 @@
 # NutriStock Orphelinat
 
-Application web de gestion nutritionnelle et de stock pour le Centre Orphelinat de la Gendarmerie.
+Site web de gestion nutritionnelle et de stock pour le Centre Orphelinat de la Gendarmerie.
 
 ## Fonctionnalités actuelles
 
@@ -26,14 +26,14 @@ Application web de gestion nutritionnelle et de stock pour le Centre Orphelinat 
 - Vite
 - Supabase JS
 - CSS responsive sans framework UI externe
-- Netlify pour le déploiement statique
+- GitHub Pages ou Netlify pour l'hébergement statique
 
 ## Démarrage local
 
 Prérequis : Node.js 22.12 ou supérieur.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -44,9 +44,25 @@ npm run build
 npm run preview
 ```
 
+## Site web GitHub Pages
+
+Le dépôt contient `.github/workflows/deploy-pages.yml`. À chaque modification de `main`, GitHub construit automatiquement le site puis le publie sur GitHub Pages.
+
+Une seule activation initiale est nécessaire dans GitHub :
+
+1. Ouvrir `Settings` du dépôt.
+2. Ouvrir `Pages`.
+3. Dans `Build and deployment`, choisir `GitHub Actions` comme source.
+
+Après cette activation, l'adresse prévue est :
+
+`https://romuel10.github.io/gestion-stock/`
+
+Le build Vite utilise des chemins relatifs afin que le même projet puisse aussi être hébergé sur Netlify ou un autre hébergeur statique.
+
 ## Données
 
-La version actuelle fonctionne immédiatement en mode local. Les données de démonstration sont définies dans `src/data.ts` puis sauvegardées dans le `localStorage` du navigateur lorsque l'utilisateur les modifie.
+La version actuelle fonctionne immédiatement en mode navigateur. Les données de démonstration sont définies dans `src/data.ts` puis sauvegardées dans le `localStorage` du navigateur lorsque l'utilisateur les modifie.
 
 Cette approche permet de tester le logiciel avant de créer la base de production.
 
@@ -79,17 +95,17 @@ Ne jamais mettre une clé `service_role` ou une clé secrète Supabase dans le f
 
 ## Déploiement Netlify
 
-Le dépôt contient `netlify.toml` :
+Le dépôt contient également `netlify.toml` :
 
 - commande de build : `npm run build`
 - dossier publié : `dist`
 - Node.js : 22
 
-Il suffit donc de connecter ce dépôt à Netlify. Chaque push sur `main` peut déclencher un nouveau déploiement.
+Le dépôt peut donc être connecté à Netlify si cette plateforme est préférée.
 
 ## Vérification automatique
 
-Le workflow `.github/workflows/build.yml` installe les dépendances et lance `npm run build` sur GitHub Actions à chaque push et pull request vers `main`.
+Le workflow `.github/workflows/build.yml` installe les dépendances avec `npm ci` et lance `npm run build` à chaque push et pull request vers `main`.
 
 ## Sécurité et nutrition
 
