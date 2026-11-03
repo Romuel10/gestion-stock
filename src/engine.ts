@@ -24,6 +24,26 @@ export function daysUntil(date?: string) {
   return Math.ceil((target.getTime() - now.getTime()) / 86_400_000)
 }
 
+function normalize(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+}
+
+export function recipeUsesRestrictedFood(recipe: Recipe, groups: AgeGroup[], foods: Food[]) {
+  const restrictions = groups.flatMap((group) => group.restrictions).map(normalize).filter(Boolean)
+  if (restrictions.length === 0) return false
+  const foodMap = new Map(foods.map((food) => [food.id, food]))
+  return recipe.ingredients.some((ingredient) => {
+    const food = foodMap.get(ingredient.foodId)
+    if (!food) return false
+    const candidates = [normalize(food.id), normalize(food.name), normalize(food.category)]
+    return restrictions.some((restriction) => candidates.some((candidate) => candidate.includes(restriction) || restriction.includes(candidate)))
+  })
+}
+
 export function recipeRequirements(recipe: Recipe, groups: AgeGroup[]) {
   const portions = basePortions(groups)
   return recipe.ingredients.map((ingredient) => ({
@@ -99,6 +119,7 @@ export function suggestRecipes(
   const budgetPerMeal = weeklyBudget / 28
   return recipes
     .filter((recipe) => recipe.mealType === mealType)
+    .filter((recipe) => !recipeUsesRestrictedFood(recipe, groups, foods))
     .map((recipe) => evaluateRecipe(recipe, groups, foods, budgetPerMeal, recentRecipeIds))
     .sort((a, b) => b.score - a.score)
 }
@@ -110,18 +131,37 @@ export function generateSmartWeek(
   weeklyBudget: number
 ): DayMenu[] {
   const recentByType = new Map<MealType, string[]>()
+  const simulatedFoods = foods.map((food) => ({ ...food, stock: Math.max(0, food.stock - (food.reserved ?? 0)), reserved: 0 }))
   const result: DayMenu[] = []
+  let remainingBudget = weeklyBudget
+  let remainingMeals = 28
 
   days.forEach((day) => {
     const menu: DayMenu = { day, breakfast: '', lunch: '', snack: '', dinner: '' }
     mealSlots.forEach(({ key, type }) => {
       const recent = recentByType.get(type) ?? []
-      const suggestions = suggestRecipes(type, groups, foods, recipes, weeklyBudget, recent.slice(-2))
+      const budgetForRemainingMeals = remainingMeals > 0 ? remainingBudget / remainingMeals : 0
+      const suggestions = recipes
+        .filter((recipe) => recipe.mealType === type)
+        .filter((recipe) => !recipeUsesRestrictedFood(recipe, groups, simulatedFoods))
+        .map((recipe) => evaluateRecipe(recipe, groups, simulatedFoods, budgetForRemainingMeals, recent.slice(-2)))
+        .sort((a, b) => b.score - a.score)
+
       const chosen = suggestions[0]
       if (chosen) {
         menu[key] = chosen.recipeId
         recentByType.set(type, [...recent, chosen.recipeId])
+        const recipe = recipes.find((item) => item.id === chosen.recipeId)
+        if (recipe) {
+          const needs = recipeRequirements(recipe, groups)
+          needs.forEach((need) => {
+            const food = simulatedFoods.find((item) => item.id === need.foodId)
+            if (food) food.stock = Math.max(0, food.stock - need.quantity)
+          })
+          remainingBudget = Math.max(0, remainingBudget - recipeCost(recipe, groups, foods))
+        }
       }
+      remainingMeals -= 1
     })
     result.push(menu)
   })
