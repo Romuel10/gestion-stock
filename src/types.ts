@@ -15,6 +15,9 @@ export type Supplier = {
   name: string
   contact?: string
   location?: string
+  type?: string
+  phone?: string
+  notes?: string
 }
 
 export type PricePoint = {
@@ -73,11 +76,13 @@ export type ShoppingNeed = {
 export type StockMovement = {
   id: string
   foodId: string
-  type: 'entrée' | 'sortie' | 'don' | 'ajustement'
+  type: 'entrée' | 'sortie' | 'don' | 'ajustement' | 'perte'
   quantity: number
   date: string
-  reason: string
-  user: string
+  unitPrice?: number
+  note?: string
+  reason?: string
+  user?: string
 }
 
 export type AuditEntry = {
