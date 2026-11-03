@@ -1,11 +1,11 @@
 {
-  "name": "NutriStock Orphelinat",
-  "short_name": "NutriStock",
-  "description": "Gestion des menus équilibrés, prix, achats et stocks du centre orphelinat.",
+  "name": "OrphéNutri",
+  "short_name": "OrphéNutri",
+  "description": "Gestion des menus, prix, achats, budget et stocks du Centre Orphelinat de la Gendarmerie.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
-  "background_color": "#f4f7f6",
+  "background_color": "#f3f6f4",
   "theme_color": "#0f766e",
   "lang": "fr",
   "icons": [
